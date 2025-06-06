@@ -1,38 +1,36 @@
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import dotenv from 'dotenv';
-import fs from 'fs';
-import { postToInstagram } from './postToInstagram.js';
-import { generateCaption } from './captionGenerator.js';
+const { postToInstagram } = require('./post-to-instagram');
+const { generateCaption } = require('./captionGenerator');
+const { getFirestore } = require('firebase-admin/firestore');
+const admin = require('firebase-admin');
+const serviceAccount = require('./serviceAccountKey.json');
 
-dotenv.config();
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_JSON);
-initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore();
 
 async function main() {
-  const snapshot = await db.collection('properties').get();
+  const snapshot = await db.collection('properties')
+    .where('postedToInstagram', '!=', true)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) {
+    console.log('✅ No new properties to post.');
+    return;
+  }
 
   for (const doc of snapshot.docs) {
     const data = doc.data();
-    if (data.postedToInstagram === true) {
-      continue;
-    }
-
-    const imageUrls = data.imageUrls || (data.imageUrl ? [data.imageUrl] : []);
-    if (!imageUrls.length) continue;
-
+    const images = data.imageUrls || [data.imageUrl];
     const caption = generateCaption(data);
-    const success = await postToInstagram(imageUrls, caption);
 
-    if (success) {
-      await db.collection('properties').doc(doc.id).update({ postedToInstagram: true });
-      console.log(`✅ Posted to Instagram: ${doc.id}`);
-    } else {
-      console.log(`❌ Failed to post: ${doc.id}`);
-    }
+    await postToInstagram(images, caption);  // Puppeteer-based real posting
+
+    await doc.ref.update({ postedToInstagram: true });
+    console.log(`✅ Marked posted: ${doc.id}`);
   }
 }
 
-main();
+main().catch(console.error);
